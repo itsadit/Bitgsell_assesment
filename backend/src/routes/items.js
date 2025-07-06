@@ -1,29 +1,39 @@
 const express = require('express');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
+
 const router = express.Router();
 const DATA_PATH = path.join(__dirname, '../../../data/items.json');
 
-// Utility to read data (intentionally sync to highlight blocking issue)
-function readData() {
-  const raw = fs.readFileSync(DATA_PATH);
+
+// Utility to read data (async, non-blocking)
+async function readData() {
+  const raw = await fs.readFile(DATA_PATH, 'utf-8');
   return JSON.parse(raw);
 }
 
+// Utility to write data
+async function writeData(data) {
+  await fs.writeFile(DATA_PATH, JSON.stringify(data, null, 2));
+}
+
 // GET /api/items
-router.get('/', (req, res, next) => {
+router.get('/', async (req, res, next) => {
   try {
-    const data = readData();
     const { limit, q } = req.query;
-    let results = data;
+    let results = await readData();
 
     if (q) {
-      // Simple substring search (sub‑optimal)
-      results = results.filter(item => item.name.toLowerCase().includes(q.toLowerCase()));
+      results = results.filter(item =>
+        item.name.toLowerCase().includes(q.toLowerCase())
+      );
     }
 
     if (limit) {
-      results = results.slice(0, parseInt(limit));
+      const num = parseInt(limit);
+      if (!isNaN(num)) {
+        results = results.slice(0, num);
+      }
     }
 
     res.json(results);
@@ -33,15 +43,19 @@ router.get('/', (req, res, next) => {
 });
 
 // GET /api/items/:id
-router.get('/:id', (req, res, next) => {
+router.get('/:id', async (req, res, next) => {
   try {
-    const data = readData();
-    const item = data.find(i => i.id === parseInt(req.params.id));
+    const data = await readData();
+    const { id } = req.params;
+    const item = data.find(i => String(i.id) === id);
+
+
     if (!item) {
-      const err = new Error('Item not found');
-      err.status = 404;
-      throw err;
+      const error = new Error('Item not found');
+      error.status = 404;
+      throw error;
     }
+
     res.json(item);
   } catch (err) {
     next(err);
@@ -49,14 +63,23 @@ router.get('/:id', (req, res, next) => {
 });
 
 // POST /api/items
-router.post('/', (req, res, next) => {
+router.post('/', async (req, res, next) => {
   try {
-    // TODO: Validate payload (intentional omission)
     const item = req.body;
-    const data = readData();
-    item.id = Date.now();
+
+    // Basic validation
+    if (!item.name || typeof item.name !== 'string') {
+      const error = new Error('Invalid item payload: name is required');
+      error.status = 400;
+      throw error;
+    }
+
+    const data = await readData();
+    item.id = Date.now(); // Or use a UUID in real apps
     data.push(item);
-    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+
+    await writeData(data);
+
     res.status(201).json(item);
   } catch (err) {
     next(err);
